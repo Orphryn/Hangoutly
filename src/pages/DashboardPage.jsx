@@ -8,6 +8,9 @@ import {
   Plus,
   ShieldCheck,
   Users,
+  Mail,
+  Check,
+  X,
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -16,47 +19,92 @@ export default function DashboardPage() {
 
   const [profile, setProfile] = useState(null);
   const [groups, setGroups] = useState([]);
+  const [invites, setInvites] = useState([]);
   const [loadingGroups, setLoadingGroups] = useState(true);
 
-  useEffect(() => {
-    async function loadDashboard() {
-      if (!user) return;
+  async function loadDashboard() {
+    if (!user) return;
 
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .single();
+    setLoadingGroups(true);
 
-      setProfile(profileData);
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
 
-      const { data: memberRows, error: groupsError } = await supabase
-        .from("group_members")
-        .select(`
-          role,
-          groups (
-            id,
-            name,
-            description,
-            created_at
-          )
-        `)
-        .eq("user_id", user.id);
+    setProfile(profileData);
 
-      if (!groupsError && memberRows) {
-        const normalizedGroups = memberRows
+    const { data: memberRows } = await supabase
+      .from("group_members")
+      .select(`
+        id,
+        role,
+        status,
+        groups (
+          id,
+          name,
+          description,
+          created_at
+        )
+      `)
+      .eq("user_id", user.id)
+      .eq("status", "accepted")
+      .order("joined_at", { ascending: false })
+      .limit(3);
+
+    if (memberRows) {
+      setGroups(
+        memberRows
           .map((row) => ({
             ...row.groups,
             role: row.role,
+            membershipId: row.id,
           }))
-          .filter(Boolean);
-
-        setGroups(normalizedGroups);
-      }
-
-      setLoadingGroups(false);
+          .filter(Boolean)
+      );
     }
 
+    const { data: inviteRows } = await supabase
+      .from("group_members")
+      .select(`
+        id,
+        role,
+        status,
+        invited_by,
+        groups (
+          id,
+          name,
+          description
+        ),
+        inviter:invited_by (
+          id,
+          username,
+          display_name,
+          avatar_url,
+          email
+        )
+      `)
+      .eq("user_id", user.id)
+      .eq("status", "pending");
+
+    if (inviteRows) {
+      setInvites(
+        inviteRows
+          .map((row) => ({
+            ...row.groups,
+            role: row.role,
+            inviteId: row.id,
+            inviter: row.inviter,
+          }))
+          .filter(Boolean)
+      );
+    }
+
+    setLoadingGroups(false);
+  }
+
+  useEffect(() => {
     loadDashboard();
   }, [user]);
 
@@ -64,6 +112,23 @@ export default function DashboardPage() {
     await supabase.auth.signOut();
     navigate("/login");
   }
+
+  async function acceptInvite(inviteId) {
+    await supabase
+      .from("group_members")
+      .update({ status: "accepted" })
+      .eq("id", inviteId);
+
+    loadDashboard();
+  }
+
+  async function declineInvite(inviteId) {
+    await supabase.from("group_members").delete().eq("id", inviteId);
+    loadDashboard();
+  }
+
+  const displayName = profile?.username || profile?.display_name || user?.email;
+  const avatarInitial = displayName?.[0]?.toUpperCase() || "?";
 
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
@@ -85,7 +150,7 @@ export default function DashboardPage() {
               />
             ) : (
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-violet-600 font-bold">
-                {user?.email?.[0]?.toUpperCase()}
+                {avatarInitial}
               </div>
             )}
 
@@ -101,9 +166,7 @@ export default function DashboardPage() {
         <section className="mb-8 rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
           <p className="text-slate-400">Welcome back</p>
 
-          <h2 className="mt-1 text-3xl font-bold">
-            {profile?.display_name || profile?.username || user?.email}
-          </h2>
+          <h2 className="mt-1 text-3xl font-bold">{displayName}</h2>
 
           <p className="mt-2 text-slate-400">
             Ready to plan your next hangout?
@@ -121,7 +184,8 @@ export default function DashboardPage() {
           <DashboardCard
             icon={<MessageCircle size={22} />}
             title="Group Chat"
-            description="Message your people."
+            description="View all your groups."
+            onClick={() => navigate("/groups")}
           />
 
           <DashboardCard
@@ -137,13 +201,65 @@ export default function DashboardPage() {
           />
         </section>
 
+        {invites.length > 0 && (
+          <section className="mb-6 rounded-3xl border border-violet-700 bg-slate-900 p-6">
+            <div className="mb-4 flex items-center gap-2">
+              <Mail size={20} className="text-violet-400" />
+              <h3 className="text-xl font-bold">Pending Invites</h3>
+            </div>
+
+            <div className="space-y-3">
+              {invites.map((invite) => (
+                <div
+                  key={invite.inviteId}
+                  className="flex items-center justify-between rounded-2xl bg-slate-950 p-4"
+                >
+                  <div>
+                    <h4 className="font-bold">{invite.name}</h4>
+
+                    <p className="text-sm text-slate-400">
+                      Invited by{" "}
+                      {invite.inviter?.username ||
+                        invite.inviter?.display_name ||
+                        invite.inviter?.email ||
+                        "Unknown user"}
+                    </p>
+
+                    {invite.description && (
+                      <p className="mt-1 text-sm text-slate-500">
+                        {invite.description}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => acceptInvite(invite.inviteId)}
+                      className="rounded-xl bg-green-600 px-3 py-2 text-sm font-semibold hover:bg-green-500"
+                    >
+                      <Check size={16} />
+                    </button>
+
+                    <button
+                      onClick={() => declineInvite(invite.inviteId)}
+                      className="rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold hover:bg-red-500"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         <section className="grid gap-6 md:grid-cols-2">
           <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
             <div className="mb-5 flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-bold">Your Groups</h3>
                 <p className="text-sm text-slate-400">
-                  Groups you created or joined.
+                  Your 3 most recent groups.
                 </p>
               </div>
 
@@ -158,18 +274,9 @@ export default function DashboardPage() {
             {loadingGroups ? (
               <p className="text-slate-400">Loading groups...</p>
             ) : groups.length === 0 ? (
-              <div>
-                <p className="text-slate-400">
-                  You haven’t created any groups yet.
-                </p>
-
-                <button
-                  onClick={() => navigate("/groups/new")}
-                  className="mt-5 rounded-xl bg-violet-600 px-5 py-3 font-semibold transition hover:bg-violet-500"
-                >
-                  Create your first group
-                </button>
-              </div>
+              <p className="text-slate-400">
+                You haven’t joined any groups yet.
+              </p>
             ) : (
               <div className="space-y-3">
                 {groups.map((group) => (
@@ -185,11 +292,9 @@ export default function DashboardPage() {
 
                       <div>
                         <h4 className="font-bold">{group.name}</h4>
-
                         <p className="text-sm text-slate-400">
                           {group.description || "No description yet."}
                         </p>
-
                         <p className="mt-1 text-xs uppercase tracking-wide text-violet-400">
                           {group.role}
                         </p>
@@ -225,9 +330,7 @@ function DashboardCard({ icon, title, description, onClick }) {
 
       <h3 className="font-bold">{title}</h3>
 
-      <p className="mt-1 text-sm text-slate-400">
-        {description}
-      </p>
+      <p className="mt-1 text-sm text-slate-400">{description}</p>
     </button>
   );
 }

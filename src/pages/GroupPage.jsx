@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
-import { CalendarDays, MessageCircle, Users, ArrowLeft, Send } from "lucide-react";
+import {
+  CalendarDays,
+  MessageCircle,
+  Users,
+  ArrowLeft,
+  Send,
+  LogOut,
+} from "lucide-react";
 
 export default function GroupPage() {
   const { groupId } = useParams();
@@ -12,10 +19,39 @@ export default function GroupPage() {
   const [activeTab, setActiveTab] = useState("chat");
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
+  const [inviteUsername, setInviteUsername] = useState("");
+  const [inviteMessage, setInviteMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState(null);
+
+  async function loadMembers() {
+    const { data } = await supabase
+      .from("group_members")
+      .select(`
+        role,
+        status,
+        profiles (
+          id,
+          username,
+          display_name,
+          avatar_url,
+          email
+        )
+      `)
+      .eq("group_id", groupId)
+      .eq("status", "accepted");
+
+    setMembers(data || []);
+  }
 
   useEffect(() => {
     async function loadGroup() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      setCurrentUserId(user?.id || null);
+
       const { data: groupData, error: groupError } = await supabase
         .from("groups")
         .select("*")
@@ -29,24 +65,7 @@ export default function GroupPage() {
       }
 
       setGroup(groupData);
-
-      const { data: memberData } = await supabase
-        .from("group_members")
-        .select(`
-          role,
-          profiles (
-            id,
-            username,
-            display_name,
-            avatar_url,
-            email
-          )
-        `)
-        .eq("group_id", groupId);
-
-      if (memberData) {
-        setMembers(memberData);
-      }
+      await loadMembers();
 
       const { data: messageData } = await supabase
         .from("messages")
@@ -62,10 +81,7 @@ export default function GroupPage() {
         .eq("group_id", groupId)
         .order("created_at", { ascending: true });
 
-      if (messageData) {
-        setMessages(messageData);
-      }
-
+      setMessages(messageData || []);
       setLoading(false);
     }
 
@@ -123,9 +139,89 @@ export default function GroupPage() {
       content: newMessage.trim(),
     });
 
-    if (!error) {
-      setNewMessage("");
+    if (error) {
+      console.error(error.message);
+      return;
     }
+
+    setNewMessage("");
+  }
+
+  async function inviteMember(e) {
+    e.preventDefault();
+
+    const cleanUsername = inviteUsername.trim().toLowerCase();
+
+    if (!cleanUsername) return;
+
+    setInviteMessage("");
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, username")
+      .eq("username", cleanUsername)
+      .single();
+
+    if (profileError || !profile) {
+      setInviteMessage("No user found with that username.");
+      return;
+    }
+
+    if (profile.id === currentUserId) {
+      setInviteMessage("You are already in this group.");
+      return;
+    }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const { error } = await supabase.from("group_members").insert({
+      group_id: groupId,
+      user_id: profile.id,
+      invited_by: user.id,
+      role: "member",
+      status: "pending",
+    });
+
+    if (error) {
+      if (error.message.includes("duplicate")) {
+        setInviteMessage("That user already has an invite or is already a member.");
+      } else {
+        setInviteMessage(error.message);
+      }
+      return;
+    }
+
+    setInviteUsername("");
+    setInviteMessage("Invite sent. They must accept before joining.");
+  }
+
+  async function leaveGroup() {
+    const confirmed = window.confirm("Are you sure you want to leave this group?");
+    if (!confirmed) return;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    await supabase
+      .from("group_members")
+      .delete()
+      .eq("group_id", groupId)
+      .eq("user_id", user.id);
+
+    const { data: remainingMembers } = await supabase
+      .from("group_members")
+      .select("id")
+      .eq("group_id", groupId)
+      .eq("status", "accepted");
+
+    if (!remainingMembers || remainingMembers.length === 0) {
+      await supabase.from("groups").delete().eq("id", groupId);
+    }
+
+    navigate("/dashboard");
   }
 
   if (loading) {
@@ -155,11 +251,21 @@ export default function GroupPage() {
           Back to Dashboard
         </button>
 
-        <header className="mb-8 rounded-3xl border border-slate-800 bg-slate-900 p-6">
-          <h1 className="text-4xl font-bold">{group.name}</h1>
-          <p className="mt-2 text-slate-400">
-            {group.description || "No description yet."}
-          </p>
+        <header className="mb-8 flex items-center justify-between rounded-3xl border border-slate-800 bg-slate-900 p-6">
+          <div>
+            <h1 className="text-4xl font-bold">{group.name}</h1>
+            <p className="mt-2 text-slate-400">
+              {group.description || "No description yet."}
+            </p>
+          </div>
+
+          <button
+            onClick={leaveGroup}
+            className="flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold transition hover:bg-red-500"
+          >
+            <LogOut size={16} />
+            Leave Group
+          </button>
         </header>
 
         <section className="grid gap-6 lg:grid-cols-[280px_1fr]">
@@ -169,42 +275,64 @@ export default function GroupPage() {
               Members
             </h2>
 
+            <form onSubmit={inviteMember} className="mb-5 space-y-2">
+              <input
+                type="text"
+                placeholder="Invite by username"
+                value={inviteUsername}
+                onChange={(e) => setInviteUsername(e.target.value)}
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-violet-500"
+              />
+
+              <button
+                type="submit"
+                className="w-full rounded-xl bg-violet-600 px-3 py-2 text-sm font-semibold transition hover:bg-violet-500"
+              >
+                Send Invite
+              </button>
+
+              {inviteMessage && (
+                <p className="text-xs text-slate-400">{inviteMessage}</p>
+              )}
+            </form>
+
             <div className="space-y-3">
-              {members.map((member) => {
-                const profile = member.profiles;
+              {members.length === 0 ? (
+                <p className="text-sm text-slate-400">No members loaded.</p>
+              ) : (
+                members.map((member) => {
+                  const profile = member.profiles;
 
-                return (
-                  <div
-                    key={profile?.id}
-                    className="flex items-center gap-3 rounded-2xl bg-slate-950 p-3"
-                  >
-                    {profile?.avatar_url ? (
-                      <img
-                        src={profile.avatar_url}
-                        alt="Avatar"
-                        className="h-10 w-10 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-600 font-bold">
-                        {profile?.email?.[0]?.toUpperCase() || "?"}
+                  return (
+                    <div
+                      key={profile?.id}
+                      className="flex items-center gap-3 rounded-2xl bg-slate-950 p-3"
+                    >
+                      {profile?.avatar_url ? (
+                        <img
+                          src={profile.avatar_url}
+                          alt="Avatar"
+                          className="h-10 w-10 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-600 font-bold">
+                          {profile?.username?.[0]?.toUpperCase() || "?"}
+                        </div>
+                      )}
+
+                      <div>
+                        <p className="font-semibold">
+                          {profile?.username || "Unknown User"}
+                        </p>
+
+                        <p className="text-xs uppercase tracking-wide text-violet-400">
+                          {member.role}
+                        </p>
                       </div>
-                    )}
-
-                    <div>
-                      <p className="font-semibold">
-                        {profile?.display_name ||
-                          profile?.username ||
-                          profile?.email ||
-                          "Unknown User"}
-                      </p>
-
-                      <p className="text-xs uppercase tracking-wide text-violet-400">
-                        {member.role}
-                      </p>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </aside>
 
@@ -232,7 +360,10 @@ export default function GroupPage() {
                     <p className="text-slate-400">No messages yet.</p>
                   ) : (
                     messages.map((message) => (
-                      <div key={message.id} className="rounded-2xl bg-slate-900 p-4">
+                      <div
+                        key={message.id}
+                        className="rounded-2xl bg-slate-900 p-4"
+                      >
                         <div className="mb-2 flex items-center gap-3">
                           {message.profiles?.avatar_url ? (
                             <img
@@ -242,14 +373,14 @@ export default function GroupPage() {
                             />
                           ) : (
                             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-600 font-bold">
-                              {message.profiles?.email?.[0]?.toUpperCase() || "?"}
+                              {message.profiles?.username?.[0]?.toUpperCase() ||
+                                "?"}
                             </div>
                           )}
 
                           <div>
                             <p className="font-semibold">
-                              {message.profiles?.display_name ||
-                                message.profiles?.username ||
+                              {message.profiles?.username ||
                                 message.profiles?.email}
                             </p>
 
@@ -265,7 +396,10 @@ export default function GroupPage() {
                   )}
                 </div>
 
-                <form onSubmit={sendMessage} className="border-t border-slate-800 p-4">
+                <form
+                  onSubmit={sendMessage}
+                  className="border-t border-slate-800 p-4"
+                >
                   <div className="flex gap-3">
                     <input
                       type="text"

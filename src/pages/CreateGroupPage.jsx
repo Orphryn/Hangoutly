@@ -39,13 +39,13 @@ export default function CreateGroupPage() {
       return;
     }
 
-    const { error: memberError } = await supabase
-      .from("group_members")
-      .insert({
-        group_id: group.id,
-        user_id: user.id,
-        role: "owner",
-      });
+    const { error: memberError } = await supabase.from("group_members").insert({
+      group_id: group.id,
+      user_id: user.id,
+      invited_by: user.id,
+      role: "owner",
+      status: "accepted",
+    });
 
     if (memberError) {
       setMessage(memberError.message);
@@ -53,11 +53,11 @@ export default function CreateGroupPage() {
       return;
     }
 
-    navigate("/dashboard");
+    navigate(`/groups/${group.id}`);
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center px-6">
+    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-white">
       <section className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-8 shadow-2xl">
         <h1 className="text-3xl font-bold">Create a Group</h1>
         <p className="mt-2 text-slate-400">
