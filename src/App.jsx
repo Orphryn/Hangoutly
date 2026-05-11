@@ -6,6 +6,7 @@ import SignupPage from "./pages/SignupPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProfileSetup from "./pages/ProfileSetup";
 import CreateGroupPage from "./pages/CreateGroupPage";
+import GroupPage from "./pages/GroupPage";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -14,7 +15,9 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<LandingPage />} />
+
         <Route path="/login" element={<LoginPage />} />
+
         <Route path="/signup" element={<SignupPage />} />
 
         <Route
@@ -31,6 +34,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <CreateGroupPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/groups/:groupId"
+          element={
+            <ProtectedRoute>
+              <GroupPage />
             </ProtectedRoute>
           }
         />

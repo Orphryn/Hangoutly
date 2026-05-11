@@ -66,7 +66,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white px-6 py-8">
+    <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
       <section className="mx-auto max-w-6xl">
         <header className="mb-10 flex items-center justify-between">
           <div>
@@ -175,6 +175,7 @@ export default function DashboardPage() {
                 {groups.map((group) => (
                   <button
                     key={group.id}
+                    onClick={() => navigate(`/groups/${group.id}`)}
                     className="w-full rounded-2xl border border-slate-800 bg-slate-950 p-4 text-left transition hover:border-violet-500"
                   >
                     <div className="flex items-center gap-3">
@@ -184,9 +185,11 @@ export default function DashboardPage() {
 
                       <div>
                         <h4 className="font-bold">{group.name}</h4>
+
                         <p className="text-sm text-slate-400">
                           {group.description || "No description yet."}
                         </p>
+
                         <p className="mt-1 text-xs uppercase tracking-wide text-violet-400">
                           {group.role}
                         </p>
@@ -221,7 +224,10 @@ function DashboardCard({ icon, title, description, onClick }) {
       </div>
 
       <h3 className="font-bold">{title}</h3>
-      <p className="mt-1 text-sm text-slate-400">{description}</p>
+
+      <p className="mt-1 text-sm text-slate-400">
+        {description}
+      </p>
     </button>
   );
 }
